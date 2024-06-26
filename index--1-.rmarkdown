@@ -1,0 +1,209 @@
+---
+title: "Registros de anfibios de Costa Rica"
+author: "Jime y Jenny"
+format: 
+  dashboard: 
+    orientation: rows
+---
+
+
+## Carga de paquetes
+
+
+```{r}
+#| label: carga-paquetes
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(plotly)
+library(DT)
+library(sf)
+library(terra)
+library(leaflet)
+library(leaflet.extras)
+library(leafem)
+```
+
+
+## Carga de datos
+
+
+```{r}
+#| label: carga-datos-anfibios
+especies <-
+  st_read("especies-anfibios.csv",
+          quiet = TRUE) 
+
+anfibios <-
+  st_read(
+    "registros-anfibios.csv",
+    options = c(
+      "X_POSSIBLE_NAMES=decimalLongitude", 
+      "Y_POSSIBLE_NAMES=decimalLatitude"),
+    quiet = TRUE
+  )
+st_crs(anfibios) <- 4326
+```
+
+
+
+## Column {width=50%}
+
+
+
+```{r}
+#| label: carga-datos-areas
+area <-
+  st_read("areas-conservacion.gpkg", 
+          quiet = TRUE) 
+  
+```
+
+```{r}
+registros_anfibios <-
+  left_join(
+    x = anfibios,
+    y = dplyr::select(especies, iucnRedListCategory, species),
+    by = "species"
+  ) 
+```
+
+```{r}
+registros_anfibios |>
+  st_drop_geometry() |>
+  group_by(iucnRedListCategory) |> 
+  summarise(n = n()) |>
+datatable(colnames = c("Categoria de lista roja","Registros de presencia"))
+```
+
+
+
+## Column {width=50%}
+
+
+#Gráfico de barras
+
+
+```{r}
+#| label: grafico-barras-cantidad-especies
+grafico_barras_ggplot2 <-
+especies |>
+  filter(iucnRedListCategory ==  "CR" | iucnRedListCategory == "EN" | iucnRedListCategory == "VU") |>
+   group_by(iucnRedListCategory) |>
+  summarise(n = n()) |>
+  ggplot(aes(x = reorder(iucnRedListCategory, n), y = n)) +
+  geom_col(
+  ) +
+  coord_flip() + 
+  ggtitle("Gráfico de barras de cantidad de especies en categorías de la Lista Roja") +
+  xlab("iucnRedListCategory") +
+  ylab("n") +
+  labs(caption = "Fuente: especies") 
+
+# Gráfico de barras plotly
+ggplotly(grafico_barras_ggplot2, tooltip = "text") |> 
+  config(locale = 'es')
+```
+
+
+
+## Column {width=50%}
+
+
+
+```{r}
+anfibios_union_area <-
+  st_join(
+    x = anfibios,
+    y = dplyr::select(area, nombre_ac),
+    join = st_within
+  )
+
+```
+
+```{r}
+riqueza_especies_anfibios <-
+anfibios_union_area |>
+  st_drop_geometry() |>
+  group_by(nombre_ac) |>
+  summarise(riqueza_especies_anfibios = n_distinct(species, na.rm = TRUE))
+```
+
+```{r}
+areas_conservacion_union_riqueza <- 
+  left_join(
+    x = area,
+    y = dplyr::select(riqueza_especies_anfibios, nombre_ac, riqueza_especies_anfibios),
+    by = "nombre_ac"
+  ) |>
+  replace_na(list(riqueza_especies_anfibios = 0))
+```
+
+```{r}
+# Paleta de colores de riqueza de especies
+colores_riqueza_especies_anfibios <-
+  colorNumeric(
+    palette = "Reds",
+    domain = anfibios_union_area$riqueza_especies_anfibios,
+    na.color = "transparent"
+  )
+```
+
+
+# Mapa
+
+
+```{r}
+#| label: mapa
+#| title: "Mapa de riqueza de especies de anfibios en áreas de conservación"
+
+leaflet() |>
+  setView(
+    lng = -84,
+    lat = 10,
+    zoom = 7
+  ) |>
+  addTiles(group = "OSM") |>
+  addProviderTiles(provider = providers$Esri.WorldImagery, group = "Imágenes satélitales") |>
+  addLegend(
+    position = "bottomleft",
+    pal = colores_riqueza_especies_anfibios,
+    values = areas_conservacion_union_riqueza$riqueza_especies_anfibios,
+    group = "Riqueza de especies",
+    title = "Riqueza de especies"
+  ) |>
+   addPolygons(
+    data = areas_conservacion_union_riqueza,
+    fillColor = ~ colores_riqueza_especies_anfibios(areas_conservacion_union_riqueza$riqueza_especies_anfibios),
+    fillOpacity = 0.8,
+    color = "black",
+    stroke = TRUE,
+    weight = 1.0,
+    group = "area"
+  ) 
+```
+
+```{r}
+#| label: grafico-barras-riqueza
+#| title: Gráfico de barras de riqueza de especies de anfibios en áreas de conservación
+
+grafico_barras_ggplot2 <-
+areas_conservacion_union_riqueza |>
+  ggplot(aes(x = riqueza_especies_anfibios)) +
+  geom_bar(
+    aes(
+      text = paste0(
+        "Cantidad de riqueza de especies: ", after_stat(count)
+      )
+    )
+  ) +
+  ggtitle("Cantidad de riqueza de especies de anfibios") +
+  xlab("Areas de conservacion") +
+  ylab("Cantidad de riqueza de especies") 
+
+# Gráfico de barras plotly
+ggplotly(grafico_barras_ggplot2, tooltip = "text") |> 
+  config(locale = 'es')
+```
+
